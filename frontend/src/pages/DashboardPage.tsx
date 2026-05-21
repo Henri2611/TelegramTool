@@ -1,256 +1,402 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useGroupStore } from '../store/useGroupStore';
 import { groupsApi } from '../api/groups';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox';
 import { Badge } from '../components/ui/badge';
-import { Progress } from '../components/ui/progress';
 import { toast } from 'sonner';
-import { LogOut, RefreshCw, Search } from 'lucide-react';
+import { useTheme } from 'next-themes';
+import { getErrorMessage } from '../lib/utils';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../components/ui/table"
+  LogOut, RefreshCw, Search, Moon, Sun,
+  MessageCircle, SlidersHorizontal, X,
+  AlertCircle, Loader2, Users, VolumeX, Volume2,
+  Hash
+} from 'lucide-react';
 
 export default function DashboardPage() {
-  const { phone, logout } = useAuthStore();
-  const { 
-    groups, setGroups, 
+  const { token, logout } = useAuthStore();
+  const { theme, setTheme } = useTheme();
+  const {
+    groups, setGroups,
     selectedIds, toggleSelection, selectAll, clearSelection,
     searchQuery, setSearchQuery,
     filterType, setFilterType,
-    filterMuted, setFilterMuted
+    filterMuted, setFilterMuted,
   } = useGroupStore();
 
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchGroups = async () => {
-    if (!phone) return;
-    setLoading(true);
+  const [localSearch, setLocalSearch] = useState(searchQuery);
+
+  const debouncedSetSearch = useCallback((value: string) => {
+    setLocalSearch(value);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      setSearchQuery(value);
+    }, 200);
+  }, [setSearchQuery]);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, []);
+
+  const fetchGroups = useCallback(async (silent = false) => {
+    if (!token) return;
+    if (!silent) setLoading(true);
+    setError(null);
     try {
-      const data = await groupsApi.getGroups(phone);
+      const data = await groupsApi.getGroups(token);
       setGroups(data);
       clearSelection();
-      toast.success('Groups loaded successfully');
-    } catch (error: any) {
-      toast.error(error.response?.data?.detail || 'Failed to fetch groups');
+      if (!silent) toast.success('Groups loaded successfully');
+    } catch (err) {
+      const msg = getErrorMessage(err, 'Failed to load groups');
+      setError(msg);
+      if (!silent) toast.error(msg);
     } finally {
       setLoading(false);
     }
-  };
+  }, [token, setGroups, clearSelection]);
 
   useEffect(() => {
     fetchGroups();
-  }, [phone]);
+  }, [fetchGroups]);
 
-  // Filtering Logic
   const filteredGroups = useMemo(() => {
     return groups.filter(g => {
-      const matchesSearch = g.title.toLowerCase().includes(searchQuery.toLowerCase());
+      const q = localSearch.toLowerCase();
+      const matchesSearch = !q || g.title.toLowerCase().includes(q);
       const matchesType = filterType === 'all' || g.type === filterType;
-      const matchesMuted = filterMuted === 'all' || 
-                           (filterMuted === 'muted' && g.is_muted) || 
-                           (filterMuted === 'unmuted' && !g.is_muted);
-      
+      const matchesMuted = filterMuted === 'all' ||
+        (filterMuted === 'muted' && g.is_muted) ||
+        (filterMuted === 'unmuted' && !g.is_muted);
       return matchesSearch && matchesType && matchesMuted;
     });
-  }, [groups, searchQuery, filterType, filterMuted]);
+  }, [groups, localSearch, filterType, filterMuted]);
 
   const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      selectAll(filteredGroups.map(g => g.id));
-    } else {
-      clearSelection();
-    }
+    checked ? selectAll(filteredGroups.map(g => g.id)) : clearSelection();
   };
 
   const handleLeaveSelected = async () => {
-    if (selectedIds.size === 0 || !phone) return;
-    
-    const confirmLeave = window.confirm(`Are you sure you want to leave ${selectedIds.size} selected group(s)?\n\nThis process will take approximately ${selectedIds.size * 2} seconds to complete safely.`);
-    if (!confirmLeave) return;
+    const size = selectedIds.size;
+    if (size === 0 || !token) return;
+    setShowConfirm(true);
+  };
+
+  const confirmLeave = async () => {
+    setShowConfirm(false);
+    const size = selectedIds.size;
+    if (size === 0 || !token) return;
 
     setLeaving(true);
     setProgress(0);
+    setProgressText('Starting...');
     const idsToLeave = Array.from(selectedIds);
-    
+
+    let failedCount = 0;
     try {
-      await groupsApi.leaveGroups(phone, idsToLeave, (completed, total) => {
+      await groupsApi.leaveGroups(token, idsToLeave, (completed, total, hasError) => {
         setProgress((completed / total) * 100);
+        setProgressText(`Processing ${completed} of ${total}...`);
+        if (hasError) failedCount++;
       });
-      toast.success(`Successfully processed ${idsToLeave.length} groups!`);
+      const succeeded = idsToLeave.length - failedCount;
+      if (failedCount === 0) {
+        toast.success(`Successfully left ${idsToLeave.length} group${idsToLeave.length > 1 ? 's' : ''}!`);
+      } else {
+        toast.warning(`Left ${succeeded}/${idsToLeave.length} groups. ${failedCount} failed.`);
+      }
       clearSelection();
-      fetchGroups(); // Refresh list to reflect changes
-    } catch (error) {
+      fetchGroups(true);
+    } catch {
       toast.error('An error occurred during the bulk leave process.');
     } finally {
       setLeaving(false);
       setProgress(0);
+      setProgressText('');
     }
   };
 
+  const allSelected = filteredGroups.length > 0 && selectedIds.size === filteredGroups.length;
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
-        
-        {/* Header */}
-        <div className="flex justify-between items-center bg-white p-4 rounded-lg border shadow-sm">
-          <div>
-            <h1 className="text-2xl font-bold">Telegram Manager</h1>
-            <p className="text-sm text-gray-500">Logged in as {phone}</p>
+    <div className="min-h-screen bg-background">
+      {/* Confirmation Modal */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-card rounded-xl border shadow-lg max-w-md w-full mx-4 p-6 space-y-4">
+            <h3 className="text-lg font-bold">Confirm Bulk Leave</h3>
+            <p className="text-sm text-muted-foreground">
+              You are about to leave <strong>{selectedIds.size}</strong> group{selectedIds.size !== 1 ? 's' : ''}.
+              This action is irreversible and will delete chat history.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button variant="outline" onClick={() => setShowConfirm(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={confirmLeave}>
+                <LogOut className="w-4 h-4 mr-1.5" />
+                Leave {selectedIds.size}
+              </Button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={fetchGroups} disabled={loading || leaving}>
-              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+        </div>
+      )}
+
+      {/* Header */}
+      <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur-lg">
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-primary/10 rounded-xl flex items-center justify-center">
+              <MessageCircle className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="font-bold">Telegram Manager</h1>
+              <p className="text-xs text-muted-foreground">{groups.length} groups</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fetchGroups()}
+              disabled={loading || leaving}
+            >
+              <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
-            <Button variant="destructive" onClick={logout} disabled={leaving}>
-              <LogOut className="w-4 h-4 mr-2" />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={logout}
+              disabled={leaving}
+              className="text-destructive hover:text-destructive"
+            >
+              <LogOut className="w-4 h-4 mr-1.5" />
               Logout
             </Button>
           </div>
         </div>
+      </header>
 
-        {/* Filters and Search */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Filters</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-4">
-            <div className="relative flex-1 min-w-[250px]">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-              <Input 
-                placeholder="Search groups..." 
-                className="pl-9"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                disabled={leaving}
+      <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+        {/* Progress Banner */}
+        {leaving && (
+          <div className="p-5 rounded-xl bg-primary/5 border border-primary/20 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium text-primary">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>{progressText}</span>
+              </div>
+              <span className="text-sm font-mono tabular-nums text-muted-foreground">
+                {Math.round(progress)}%
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
+                style={{ width: `${progress}%` }}
               />
             </div>
-            
+          </div>
+        )}
+
+        {/* Search & Filters Bar */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search groups..."
+              className="pl-9 h-10"
+              value={localSearch}
+              onChange={(e) => debouncedSetSearch(e.target.value)}
+              disabled={leaving}
+            />
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowFilters(!showFilters)}
+            className={showFilters ? 'bg-accent' : ''}
+          >
+            <SlidersHorizontal className="w-4 h-4 mr-1.5" />
+            Filters
+          </Button>
+        </div>
+
+        {/* Filter Panel */}
+        {showFilters && (
+          <div className="p-4 rounded-xl border bg-card/50 space-y-4 sm:space-y-0 sm:flex sm:gap-4 sm:items-center">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Type:</span>
-              <select 
-                className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
+              <Hash className="w-4 h-4 text-muted-foreground" />
+              <select
+                className="h-9 rounded-lg border border-input bg-background px-3 text-sm"
                 value={filterType}
                 onChange={(e) => setFilterType(e.target.value as any)}
                 disabled={leaving}
               >
-                <option value="all">All</option>
+                <option value="all">All Types</option>
                 <option value="group">Groups</option>
                 <option value="channel">Channels</option>
               </select>
             </div>
-
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Status:</span>
-              <select 
-                className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
+              {filterMuted === 'muted'
+                ? <VolumeX className="w-4 h-4 text-muted-foreground" />
+                : <Volume2 className="w-4 h-4 text-muted-foreground" />
+              }
+              <select
+                className="h-9 rounded-lg border border-input bg-background px-3 text-sm"
                 value={filterMuted}
                 onChange={(e) => setFilterMuted(e.target.value as any)}
                 disabled={leaving}
               >
-                <option value="all">All</option>
+                <option value="all">All Status</option>
                 <option value="muted">Muted</option>
                 <option value="unmuted">Unmuted</option>
               </select>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        )}
 
-        {/* Data Table */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Your Groups & Channels ({filteredGroups.length})</CardTitle>
+        {/* Group List Card */}
+        <div className="rounded-xl border bg-card">
+          {/* Card Header */}
+          <div className="flex items-center justify-between p-4 border-b">
+            <div className="flex items-center gap-3">
+              <Checkbox
+                checked={allSelected}
+                onCheckedChange={handleSelectAll}
+                disabled={leaving || filteredGroups.length === 0}
+                className={someSelected ? 'data-[state=checked]:bg-muted-foreground' : ''}
+              />
+              <span className="text-sm font-medium">
+                {selectedIds.size > 0
+                  ? `${selectedIds.size} selected`
+                  : `${filteredGroups.length} group${filteredGroups.length !== 1 ? 's' : ''}`
+                }
+              </span>
+            </div>
             {selectedIds.size > 0 && (
-              <Button 
-                variant="destructive" 
-                onClick={handleLeaveSelected}
-                disabled={leaving}
-              >
-                Leave {selectedIds.size} Selected
-              </Button>
-            )}
-          </CardHeader>
-          <CardContent>
-            
-            {leaving && (
-              <div className="mb-6 space-y-2 p-4 bg-orange-50 border border-orange-200 rounded-lg">
-                <div className="flex justify-between text-sm font-medium text-orange-800">
-                  <span>Processing... Please do not close or refresh this page.</span>
-                  <span>{Math.round(progress)}%</span>
-                </div>
-                <Progress value={progress} className="h-2" />
+              <div className="flex items-center gap-2">
+                {selectedIds.size > 0 && (
+                  <Button variant="ghost" size="sm" onClick={clearSelection} disabled={leaving}>
+                    <X className="w-4 h-4 mr-1" />
+                    Clear
+                  </Button>
+                )}
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleLeaveSelected}
+                  disabled={leaving}
+                >
+                  <LogOut className="w-4 h-4 mr-1.5" />
+                  Leave {selectedIds.size}
+                </Button>
               </div>
             )}
+          </div>
 
-            <div className="border rounded-md">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[50px]">
-                      <Checkbox 
-                        checked={filteredGroups.length > 0 && selectedIds.size === filteredGroups.length}
-                        onCheckedChange={handleSelectAll}
-                        disabled={leaving}
-                      />
-                    </TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loading ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="h-24 text-center text-gray-500">Loading...</TableCell>
-                    </TableRow>
-                  ) : filteredGroups.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="h-24 text-center text-gray-500">No groups found.</TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredGroups.map((group) => (
-                      <TableRow key={group.id}>
-                        <TableCell>
-                          <Checkbox 
-                            checked={selectedIds.has(group.id)}
-                            onCheckedChange={() => toggleSelection(group.id)}
-                            disabled={leaving}
-                          />
-                        </TableCell>
-                        <TableCell className="font-medium">{group.title}</TableCell>
-                        <TableCell>
-                          <Badge variant={group.type === 'channel' ? 'default' : 'secondary'}>
-                            {group.type}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {group.is_muted ? (
-                            <Badge variant="outline" className="text-gray-500">Muted</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-green-600 border-green-600">Active</Badge>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+          {/* Content */}
+          {loading ? (
+            <div className="p-8 space-y-4">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="flex items-center gap-3 animate-pulse">
+                  <div className="w-5 h-5 rounded bg-muted" />
+                  <div className="flex-1 h-5 rounded bg-muted" />
+                  <div className="w-16 h-5 rounded bg-muted" />
+                  <div className="w-16 h-5 rounded bg-muted" />
+                </div>
+              ))}
             </div>
-          </CardContent>
-        </Card>
-
-      </div>
+          ) : error ? (
+            <div className="p-12 flex flex-col items-center justify-center text-center">
+              <AlertCircle className="w-10 h-10 text-destructive mb-4" />
+              <h3 className="font-semibold mb-1">Failed to load groups</h3>
+              <p className="text-sm text-muted-foreground mb-4">{error}</p>
+              <Button onClick={() => fetchGroups()} variant="outline">
+                <RefreshCw className="w-4 h-4 mr-1.5" />
+                Try Again
+              </Button>
+            </div>
+          ) : filteredGroups.length === 0 ? (
+            <div className="p-12 flex flex-col items-center justify-center text-center">
+              <Users className="w-10 h-10 text-muted-foreground mb-4" />
+              <h3 className="font-semibold mb-1">No groups found</h3>
+              <p className="text-sm text-muted-foreground">
+                {localSearch || filterType !== 'all' || filterMuted !== 'all'
+                  ? 'Try adjusting your filters or search query.'
+                  : 'No Telegram groups or channels found. Join some groups first!'}
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y">
+              {filteredGroups.map((group) => {
+                const isSelected = selectedIds.has(group.id);
+                return (
+                  <div
+                    key={group.id}
+                    className={`flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50 ${
+                      isSelected ? 'bg-accent/30' : ''
+                    }`}
+                  >
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => toggleSelection(group.id)}
+                      disabled={leaving}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{group.title}</p>
+                      {group.member_count != null && (
+                        <p className="text-xs text-muted-foreground">{group.member_count} members</p>
+                      )}
+                    </div>
+                    <Badge
+                      variant={group.type === 'channel' ? 'default' : 'secondary'}
+                      className="shrink-0"
+                    >
+                      {group.type}
+                    </Badge>
+                    {group.is_muted ? (
+                      <Badge variant="outline" className="shrink-0 text-muted-foreground">
+                        <VolumeX className="w-3 h-3 mr-1" />
+                        Muted
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="shrink-0 text-emerald-600 border-emerald-600/30 dark:text-emerald-400 dark:border-emerald-400/30">
+                        <Volume2 className="w-3 h-3 mr-1" />
+                        Active
+                      </Badge>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </main>
     </div>
   );
 }

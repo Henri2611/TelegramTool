@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : '';
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL: API_BASE,
 });
 
 export const authApi = {
@@ -17,8 +19,16 @@ export const authApi = {
     const { data } = await api.post('/auth/2fa', { phone, password });
     return data;
   },
-  checkStatus: async (phone: string) => {
-    const { data } = await api.get(`/auth/status/${encodeURIComponent(phone)}`);
+  checkStatus: async (token: string) => {
+    const { data } = await api.get('/auth/status', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return data;
+  },
+  logout: async (token: string) => {
+    const { data } = await api.post('/auth/logout', {}, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     return data;
   }
 };

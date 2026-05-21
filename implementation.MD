@@ -17,7 +17,7 @@ The system acts as a Telegram client interface, not a bot, leveraging Telegramâ€
 - Enable multi-selection of groups
 - Allow bulk leaving of selected groups
 - Ensure safe interaction with Telegram API (rate limiting, delays)
-
+  
 ---
 
 ## 3. High-Level Architecture
