@@ -8,6 +8,7 @@ load_dotenv()
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from routers import auth, groups
 from services.telegram_service import disconnect_all_clients
 
@@ -24,18 +25,26 @@ async def lifespan(app: FastAPI):
     logger.info("All clients disconnected.")
 
 
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173")
-parsed_origins = [o.strip() for o in cors_origins.split(",")]
+cors_origins_raw = os.getenv("CORS_ORIGINS", "*")
+parsed_origins = [o.strip() for o in cors_origins_raw.split(",")]
 
 app = FastAPI(title="Telegram Bulk Group Manager", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=parsed_origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    allow_credentials=True,
-)
+if "*" in parsed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=parsed_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        allow_credentials=True,
+    )
 
 @app.get("/health")
 async def health():
@@ -66,6 +75,18 @@ async def cors_preflight(request: Request, call_next):
             headers["access-control-allow-credentials"] = "true"
         return Response(status_code=200, headers=headers)
     return await call_next(request)
+
+
+@app.middleware("http")
+async def spa_fallback(request: Request, call_next):
+    response = await call_next(request)
+    if response.status_code == 404 and frontend_available:
+        path = request.url.path
+        if not path.startswith("/auth") and not path.startswith("/groups") and path != "/health":
+            index_path = os.path.join(static_dir, "index.html")
+            if os.path.exists(index_path):
+                return FileResponse(index_path, media_type="text/html")
+    return response
 
 
 @app.middleware("http")

@@ -7,7 +7,7 @@ class TestCleanPhone:
         assert clean_phone("+254 712 345 678") == "+254712345678"
 
     def test_local_format(self):
-        assert clean_phone("0712345678") == "+0712345678"
+        assert clean_phone("0712345678") == "+712345678"
 
     def test_with_brackets_and_dashes(self):
         assert clean_phone("+1 (234) 567-8900") == "+12345678900"

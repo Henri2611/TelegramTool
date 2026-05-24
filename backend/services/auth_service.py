@@ -4,7 +4,9 @@ import jwt
 from fastapi import Header, HTTPException
 from typing import Optional
 
-JWT_SECRET = os.getenv("JWT_SECRET", os.urandom(32).hex())
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET environment variable is required. Set it in backend/.env")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY = 86400  # 24 hours
 

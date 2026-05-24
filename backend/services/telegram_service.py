@@ -16,6 +16,7 @@ os.makedirs(_SESSION_DIR, exist_ok=True)
 active_clients: dict[str, TelegramClient] = {}
 client_locks: dict[str, asyncio.Lock] = {}
 clients_lock = asyncio.Lock()
+_pending_code_hashes: dict[str, str] = {}
 
 
 def _get_proxy():
@@ -97,6 +98,7 @@ async def logout_client(phone: str):
                 del active_clients[phone]
         if phone in client_locks:
             del client_locks[phone]
+    _pending_code_hashes.pop(phone, None)
     session_path = os.path.join(_SESSION_DIR, phone)
     for suffix in (".session", ".session-journal"):
         path = session_path + suffix
@@ -121,10 +123,15 @@ async def send_code(phone: str):
         client = await get_client(phone)
         await client.connect()
         if not await client.is_user_authorized():
+            if phone in _pending_code_hashes:
+                logger.info("Reusing existing pending code hash for %s", phone)
+                return {"phone_code_hash": _pending_code_hashes[phone]}
             result = await client.send_code_request(phone)
+            _pending_code_hashes[phone] = result.phone_code_hash
             logger.info("Sent code to %s", phone)
             return {"phone_code_hash": result.phone_code_hash}
         logger.info("Phone %s already authorized", phone)
+        _pending_code_hashes.pop(phone, None)
         return {"message": "Already authorized"}
 
 
@@ -134,6 +141,7 @@ async def verify_code(phone: str, code: str, phone_code_hash: str):
         await client.connect()
         try:
             await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+            _pending_code_hashes.pop(phone, None)
             logger.info("Login successful for %s", phone)
             return {"success": True, "message": "Login successful"}
         except SessionPasswordNeededError:
@@ -150,6 +158,7 @@ async def verify_2fa(phone: str, password: str):
         await client.connect()
         try:
             await client.sign_in(password=password)
+            _pending_code_hashes.pop(phone, None)
             logger.info("2FA login successful for %s", phone)
             return {"success": True, "message": "2FA Login successful"}
         except Exception as e:
@@ -242,7 +251,7 @@ async def leave_groups_stream(phone: str, group_ids: list[str]):
                     wait = fwe.seconds
                     logger.warning("FloodWait for %s: waiting %ds", phone, wait)
                     yield json.dumps({"status": "flood_wait", "group_id": gid_str, "wait_seconds": wait}) + "\n"
-                    await asyncio.sleep(min(wait, 60))
+                    await asyncio.sleep(wait + 1)
                     try:
                         await client.delete_dialog(gid)
                         yield json.dumps({"status": "progress", "group_id": gid_str, "index": idx + 1, "total": total}) + "\n"

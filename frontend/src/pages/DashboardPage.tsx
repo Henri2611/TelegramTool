@@ -183,8 +183,8 @@ export default function DashboardPage() {
               onClick={() => fetchGroups()}
               disabled={loading || leaving}
             >
-              <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline ml-1.5">Refresh</span>
             </Button>
             <Button
               variant="ghost"
@@ -193,8 +193,8 @@ export default function DashboardPage() {
               disabled={leaving}
               className="text-destructive hover:text-destructive"
             >
-              <LogOut className="w-4 h-4 mr-1.5" />
-              Logout
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline ml-1.5">Logout</span>
             </Button>
           </div>
         </div>
@@ -380,14 +380,14 @@ export default function DashboardPage() {
                       {group.type}
                     </Badge>
                     {group.is_muted ? (
-                      <Badge variant="outline" className="shrink-0 text-muted-foreground">
-                        <VolumeX className="w-3 h-3 mr-1" />
-                        Muted
+                      <Badge variant="outline" className="shrink-0 text-muted-foreground max-sm:px-1.5">
+                        <VolumeX className="w-3 h-3" />
+                        <span className="hidden sm:inline ml-1">Muted</span>
                       </Badge>
                     ) : (
-                      <Badge variant="outline" className="shrink-0 text-emerald-600 border-emerald-600/30 dark:text-emerald-400 dark:border-emerald-400/30">
-                        <Volume2 className="w-3 h-3 mr-1" />
-                        Active
+                      <Badge variant="outline" className="shrink-0 text-emerald-600 border-emerald-600/30 dark:text-emerald-400 dark:border-emerald-400/30 max-sm:px-1.5">
+                        <Volume2 className="w-3 h-3" />
+                        <span className="hidden sm:inline ml-1">Active</span>
                       </Badge>
                     )}
                   </div>

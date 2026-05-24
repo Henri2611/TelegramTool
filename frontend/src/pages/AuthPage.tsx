@@ -152,6 +152,15 @@ export default function AuthPage() {
     } catch (err) {
       const msg = getErrorMessage(err, 'Failed to send code');
       console.error('sendCode error:', err);
+      if (err && typeof err === 'object') {
+        console.error('sendCode error details:', {
+          message: (err as any).message,
+          code: (err as any).code,
+          response: (err as any).response?.data,
+          status: (err as any).response?.status,
+          stack: (err as any).stack,
+        });
+      }
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -207,31 +216,31 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen flex">
-      <div className="hidden md:flex md:w-1/2 relative overflow-hidden bg-gradient-to-br from-primary via-primary to-primary/80 dark:from-primary dark:via-primary dark:to-primary/60">
+    <div className="min-h-screen flex flex-col md:flex-row">
+      <div className="w-full md:w-1/2 flex relative overflow-hidden bg-gradient-to-br from-primary via-primary to-primary/80 dark:from-primary dark:via-primary dark:to-primary/60 py-8 md:py-0">
         <div className="absolute inset-0 bg-black/40 dark:bg-black/10" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.15),transparent_50%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,rgba(0,0,0,0.3),transparent_50%)]" />
-        <div className="relative z-10 flex flex-col items-center justify-center w-full p-12 text-white">
-          <div className="mb-8">
-            <div className="w-20 h-20 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center">
-              <MessageCircle className="w-10 h-10" />
+        <div className="relative z-10 flex flex-col items-center justify-center w-full px-6 md:px-12 text-white">
+          <div className="mb-4 md:mb-8">
+            <div className="w-14 h-14 md:w-20 md:h-20 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center">
+              <MessageCircle className="w-7 h-7 md:w-10 md:h-10" />
             </div>
           </div>
-          <h1 className="text-4xl font-bold mb-4 text-center">Telegram Manager</h1>
-          <p className="text-sm text-white/60 mb-6 text-center">Not affiliated with Telegram</p>
-          <p className="text-lg text-white/80 text-center max-w-md leading-relaxed">
+          <h1 className="text-2xl md:text-4xl font-bold mb-2 md:mb-4 text-center">Telegram Manager</h1>
+          <p className="text-xs md:text-sm text-white/60 mb-4 md:mb-6 text-center">Not affiliated with Telegram</p>
+          <p className="text-sm md:text-lg text-white/80 text-center max-w-md leading-relaxed">
             Manage your Telegram groups and channels efficiently. Bulk leave, organize, and clean up your chat list with ease.
           </p>
-          <div className="mt-12 grid grid-cols-3 gap-6 w-full max-w-sm">
+          <div className="mt-6 md:mt-12 grid grid-cols-3 gap-4 md:gap-6 w-full max-w-sm">
             {[
               { icon: Smartphone, label: 'Secure Login' },
               { icon: ShieldCheck, label: 'Safe & Private' },
               { icon: Send, label: 'Bulk Actions' },
             ].map(({ icon: Icon, label }) => (
               <div key={label} className="flex flex-col items-center gap-2 text-center">
-                <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center">
-                  <Icon className="w-5 h-5" />
+                <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center">
+                  <Icon className="w-4 h-4 md:w-5 md:h-5" />
                 </div>
                 <span className="text-xs text-white/70">{label}</span>
               </div>
@@ -243,21 +252,13 @@ export default function AuthPage() {
       <div className="flex-1 flex items-center justify-center p-6 relative">
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          className="absolute top-6 right-6 p-2 rounded-lg hover:bg-muted transition-colors"
+          className="fixed top-4 right-4 md:top-6 md:right-6 p-2.5 md:p-2 rounded-lg hover:bg-muted transition-colors z-50 bg-background/80 backdrop-blur-sm border shadow-sm"
+          aria-label="Toggle dark mode"
         >
           {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
         </button>
 
         <div className="w-full max-w-sm">
-          <div className="lg:hidden flex items-center gap-3 mb-10">
-            <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
-              <MessageCircle className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h2 className="font-bold text-lg">Telegram Manager</h2>
-              <p className="text-xs text-muted-foreground">Not affiliated with Telegram</p>
-            </div>
-          </div>
 
           <StepIndicator current={stepIndex} total={3} />
 

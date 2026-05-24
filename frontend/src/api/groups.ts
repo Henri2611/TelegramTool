@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : '';
+const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -59,7 +59,7 @@ export const groupsApi = {
             console.error('Error leaving group:', data);
             onProgress(data.index || 0, data.total || 0, true);
           }
-        } catch (e) {
+        } catch {
           console.error("Failed to parse JSON stream chunk:", line);
         }
       }
