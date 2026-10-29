@@ -105,3 +105,9 @@ if frontend_available:
 else:
     logger.info("Frontend not built. Run 'npm run build' in frontend/ to serve UI.")
 logger.info("API at http://%s:%s/health", host, port)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host=host, port=port, reload=False)
