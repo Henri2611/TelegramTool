@@ -6,7 +6,8 @@ import logging
 import socks
 from datetime import datetime, timezone
 from telethon import TelegramClient, functions, types
-from telethon.errors import SessionPasswordNeededError, FloodWaitError
+from telethon.errors import SessionPasswordNeededError, FloodWaitError, SendCodeUnavailableError
+from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,35 @@ def get_lock(phone: str) -> asyncio.Lock:
     return client_locks[phone]
 
 
+def _conn_error_detail() -> str:
+    """Return a user-facing hint for ConnectionError based on proxy config."""
+    if _get_proxy() is None:
+        return (
+            "Cannot reach Telegram servers. "
+            "Configure a proxy in backend/.env — for example Tor (install & start it first):\n"
+            "  TELEGRAM_PROXY_TYPE=SOCKS5\n"
+            "  TELEGRAM_PROXY_HOST=127.0.0.1\n"
+            "  TELEGRAM_PROXY_PORT=9050"
+        )
+    return (
+        "Cannot reach Telegram servers through the configured proxy. "
+        "Make sure your proxy is running and accessible."
+    )
+
+
+async def _safe_connect(client: TelegramClient, phone: str) -> None:
+    """Connect the Telegram client; raise HTTP 503 on ConnectionError."""
+    try:
+        await client.connect()
+    except ConnectionError as e:
+        async with clients_lock:
+            active_clients.pop(phone, None)
+        logger.error("Telegram connect failed for %s: %s", phone, e)
+        raise HTTPException(status_code=503, detail=_conn_error_detail())
+
+
+
+
 async def get_client(phone: str) -> TelegramClient:
     API_ID = os.getenv("TELEGRAM_API_ID")
     API_HASH = os.getenv("TELEGRAM_API_HASH")
@@ -58,15 +88,24 @@ async def get_client(phone: str) -> TelegramClient:
     async with clients_lock:
         if phone not in active_clients:
             session_path = os.path.join(_SESSION_DIR, phone)
+            proxy = _get_proxy()
             client = TelegramClient(
                 session_path,
                 int(API_ID),
                 API_HASH,
-                proxy=_get_proxy(),
+                proxy=proxy,
+                # Fail faster: 3 retries × ~10s timeout ≈ 30s max wait
+                connection_retries=3,
+                retry_delay=1,
+                timeout=10,
                 system_version="4.16.30-vxCUSTOM"
             )
             active_clients[phone] = client
-            logger.info("Created new TelegramClient for %s", phone)
+            logger.info(
+                "Created new TelegramClient for %s (proxy: %s)",
+                phone,
+                f"SOCKS5 {proxy[1]}:{proxy[2]}" if proxy else "none",
+            )
         return active_clients[phone]
 
 
@@ -121,15 +160,39 @@ async def disconnect_all_clients():
 async def send_code(phone: str):
     async with get_lock(phone):
         client = await get_client(phone)
-        await client.connect()
+        await _safe_connect(client, phone)
+
         if not await client.is_user_authorized():
-            if phone in _pending_code_hashes:
-                logger.info("Reusing existing pending code hash for %s", phone)
-                return {"phone_code_hash": _pending_code_hashes[phone]}
-            result = await client.send_code_request(phone)
-            _pending_code_hashes[phone] = result.phone_code_hash
-            logger.info("Sent code to %s", phone)
-            return {"phone_code_hash": result.phone_code_hash}
+            # If a code was already sent for this phone, return the cached hash
+            # rather than triggering Telethon's ResendCodeRequest, which Telegram
+            # will reject once all delivery methods are exhausted.
+            existing_hash = _pending_code_hashes.get(phone)
+            if existing_hash:
+                logger.info("Returning cached code hash for %s (avoiding resend)", phone)
+                return {"phone_code_hash": existing_hash}
+
+            try:
+                result = await client.send_code_request(phone)
+                _pending_code_hashes[phone] = result.phone_code_hash
+                logger.info("Sent code to %s", phone)
+                return {"phone_code_hash": result.phone_code_hash}
+            except SendCodeUnavailableError:
+                # All delivery methods exhausted — surface a clear message
+                logger.warning("SendCodeUnavailable for %s", phone)
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        "Telegram has exhausted all code delivery methods for this number. "
+                        "Please wait a few minutes, then try again."
+                    ),
+                )
+            except FloodWaitError as e:
+                wait = e.seconds
+                logger.warning("FloodWait sending code to %s: waiting %ds", phone, wait)
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Telegram is rate-limiting. Please wait {wait} seconds before trying again."
+                )
         logger.info("Phone %s already authorized", phone)
         _pending_code_hashes.pop(phone, None)
         return {"message": "Already authorized"}
@@ -138,7 +201,7 @@ async def send_code(phone: str):
 async def verify_code(phone: str, code: str, phone_code_hash: str):
     async with get_lock(phone):
         client = await get_client(phone)
-        await client.connect()
+        await _safe_connect(client, phone)
         try:
             await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
             _pending_code_hashes.pop(phone, None)
@@ -155,7 +218,7 @@ async def verify_code(phone: str, code: str, phone_code_hash: str):
 async def verify_2fa(phone: str, password: str):
     async with get_lock(phone):
         client = await get_client(phone)
-        await client.connect()
+        await _safe_connect(client, phone)
         try:
             await client.sign_in(password=password)
             _pending_code_hashes.pop(phone, None)
@@ -169,7 +232,7 @@ async def verify_2fa(phone: str, password: str):
 async def check_auth_status(phone: str):
     async with get_lock(phone):
         client = await get_client(phone)
-        await client.connect()
+        await _safe_connect(client, phone)
         is_auth = await client.is_user_authorized()
         return {"is_authorized": is_auth}
 
@@ -177,7 +240,7 @@ async def check_auth_status(phone: str):
 async def get_user_groups(phone: str):
     async with get_lock(phone):
         client = await get_client(phone)
-        await client.connect()
+        await _safe_connect(client, phone)
         if not await client.is_user_authorized():
             raise Exception("User not authorized")
 
@@ -235,7 +298,11 @@ async def get_user_groups(phone: str):
 async def leave_groups_stream(phone: str, group_ids: list[str]):
     async with get_lock(phone):
         client = await get_client(phone)
-        await client.connect()
+        try:
+            await _safe_connect(client, phone)
+        except HTTPException as e:
+            yield json.dumps({"status": "error", "error": e.detail}) + "\n"
+            return
         if not await client.is_user_authorized():
             yield json.dumps({"status": "error", "error": "User not authorized"}) + "\n"
             return

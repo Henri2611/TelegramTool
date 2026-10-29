@@ -1,21 +1,27 @@
 import { create } from 'zustand';
 import type { Group } from '../api/groups';
 
+export type SortBy = 'name' | 'members' | 'type';
+export type SortDir = 'asc' | 'desc';
+
 interface GroupState {
   groups: Group[];
   selectedIds: Set<string>;
   searchQuery: string;
   filterType: 'all' | 'group' | 'channel';
   filterMuted: 'all' | 'muted' | 'unmuted';
-  
+  sortBy: SortBy;
+  sortDir: SortDir;
+
   setGroups: (groups: Group[]) => void;
   toggleSelection: (id: string) => void;
   selectAll: (ids: string[]) => void;
   clearSelection: () => void;
-  
+
   setSearchQuery: (query: string) => void;
   setFilterType: (type: 'all' | 'group' | 'channel') => void;
   setFilterMuted: (muted: 'all' | 'muted' | 'unmuted') => void;
+  setSortBy: (sortBy: SortBy, sortDir?: SortDir) => void;
 }
 
 export const useGroupStore = create<GroupState>((set) => ({
@@ -24,6 +30,8 @@ export const useGroupStore = create<GroupState>((set) => ({
   searchQuery: '',
   filterType: 'all',
   filterMuted: 'all',
+  sortBy: 'name',
+  sortDir: 'asc',
 
   setGroups: (groups) => set({ groups }),
   
@@ -44,4 +52,8 @@ export const useGroupStore = create<GroupState>((set) => ({
   setSearchQuery: (searchQuery) => set({ searchQuery }),
   setFilterType: (filterType) => set({ filterType }),
   setFilterMuted: (filterMuted) => set({ filterMuted }),
+  setSortBy: (sortBy, sortDir) => set((state) => ({
+    sortBy,
+    sortDir: sortDir ?? state.sortDir,
+  })),
 }));
