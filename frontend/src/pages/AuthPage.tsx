@@ -77,7 +77,7 @@ function OtpInput({
           autoFocus={i === 0}
           placeholder="·"
           className={[
-            'flex-1 h-11 text-center text-lg font-bold rounded-lg border-2 outline-none',
+            'flex-1 min-w-0 w-0 h-11 text-center text-lg font-bold rounded-lg border-2 outline-none',
             'transition-all duration-150 bg-background text-foreground placeholder:text-muted-foreground/30',
             'disabled:opacity-50 disabled:cursor-not-allowed',
             chars[i]
